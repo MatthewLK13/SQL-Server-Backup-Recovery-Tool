@@ -1,0 +1,10 @@
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\bin\Debug\BackupRestoreDB.exe.config
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\bin\Debug\BackupRestoreDB.exe
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\bin\Debug\BackupRestoreDB.pdb
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\obj\Debug\BackupRestoreDB.csprojResolveAssemblyReference.cache
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\obj\Debug\BackupRestoreDB.BackupRestoreDB.resources
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\obj\Debug\BackupRestoreDB.Properties.Resources.resources
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\obj\Debug\BackupRestoreDB.csproj.GenerateResource.Cache
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\obj\Debug\BackupRestoreDB.exe
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\obj\Debug\BackupRestoreDB.pdb
+D:\nam3\HQTCSDL\Project\BackupRestoreDB\BackupRestoreDB\obj\Debug\BackupRestoreDB.FormLogin.resources
