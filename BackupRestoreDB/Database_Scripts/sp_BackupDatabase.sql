@@ -7,7 +7,7 @@ AS
 BEGIN
     DECLARE @sqlQuery NVARCHAR(MAX);
 
-    -- @ghiDe 
+    
     IF @ghiDe = 1
     BEGIN
 		EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = @dbName;
