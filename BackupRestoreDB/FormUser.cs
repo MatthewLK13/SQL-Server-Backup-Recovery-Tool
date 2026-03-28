@@ -19,22 +19,22 @@ namespace BackupRestoreDB
         private DateTimePicker dtpGio;
         private CheckBox chkTime;
         private CheckBox chkDeleteOldBackups;
+        private string connectionString;
 
         ToolStripButton btnBackupDB;
         ToolStripButton btnRestoreDB;
         ToolStripButton btnCreateDevice;
         ToolStripButton btnExit;
 
-        private string connectionString;
         public BackupRestoreDB(string cnn)
         {
             this.connectionString = cnn;
             InitializeComponent();
-            InitializeUI();
-            LoadDanhSachDB();
+            initializeUI();
+            loadDanhSachDB();
         }
 
-        private void InitializeUI()
+        private void initializeUI()
         {
             // CÁC NÚT CHO TOOLSTRIP
             btnBackupDB = new ToolStripButton("💿 Sao lưu");
@@ -44,6 +44,7 @@ namespace BackupRestoreDB
 
             toolStripMain.Items.Add(new ToolStripSeparator());
             btnRestoreDB = new ToolStripButton("💾 Phục hồi");
+            btnRestoreDB.Click += btnRestore_Click;
             toolStripMain.Items.Add(btnRestoreDB);
 
             btnCreateDevice = new ToolStripButton("💾 Tạo device sao lưu");
@@ -135,8 +136,70 @@ namespace BackupRestoreDB
             }
         }
 
+        private void btnRestore_Click(object sender, EventArgs e)
+        {
+            // 1. Ràng buộc an toàn: Phải chọn 1 dòng lịch sử
+            if (dgvBackups.CurrentRow == null)
+            {
+                MessageBox.Show("Vui lòng chọn một bản sao lưu trong danh sách!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
-        private void LoadDanhSachDB()
+            // 2. Lấy dữ liệu từ GridView
+            int position = Convert.ToInt32(dgvBackups.CurrentRow.Cells[0].Value);
+            string tenDB = dgvDatabases.CurrentRow.Cells[0].Value.ToString();
+            string deviceName = "DEVICE_" + tenDB;
+
+            // 3. Cảnh báo mất dữ liệu
+            DialogResult dr = MessageBox.Show(
+                $"CẢNH BÁO: Dữ liệu hiện tại của [{tenDB}] sẽ bị thay thế hoàn toàn!\nBạn đã chắc chắn muốn thực hiện?",
+                "Xác nhận phục hồi", MessageBoxButtons.YesNo, MessageBoxIcon.Stop, MessageBoxDefaultButton.Button2);
+
+            if (dr == DialogResult.Yes)
+            {
+                try
+                {
+                    // Sử dụng chuỗi kết nối của bạn (thường là biến toàn cục)
+                    using (SqlConnection conn = new SqlConnection(connectionString))
+                    {
+                        conn.Open();
+                        SqlCommand cmd = new SqlCommand("sp_RestoreDatabase", conn);
+                        cmd.CommandType = CommandType.StoredProcedure;
+
+                        // Nạp tham số cứng
+                        cmd.Parameters.AddWithValue("@dbName", tenDB);
+                        cmd.Parameters.AddWithValue("@deviceName", deviceName);
+                        cmd.Parameters.AddWithValue("@position", position);
+                        cmd.Parameters.AddWithValue("@logFolderPath", @"c:\SQLBackup\Log\");
+                        // Nạp tham số linh hoạt theo CheckBox
+                        if (chkTime.Checked)
+                        {
+                            cmd.Parameters.AddWithValue("@isPointInTime", 1);
+                            DateTime time = dtpNgay.Value.Date + dtpGio.Value.TimeOfDay;
+                            cmd.Parameters.AddWithValue("@stopAtTime", time);
+                        }
+                        else
+                        {
+                            cmd.Parameters.AddWithValue("@isPointInTime", 0);
+                            cmd.Parameters.AddWithValue("@stopAtTime", DBNull.Value);
+                        }
+
+                        // Thực thi
+                        cmd.ExecuteNonQuery();
+
+                        MessageBox.Show("Khôi phục dữ liệu thành công!", "Tuyệt vời", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Quá trình khôi phục thất bại. Lỗi: \n" + ex.Message, "Lỗi Server", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+
+
+        private void loadDanhSachDB()
         {
             try
             {
@@ -189,7 +252,7 @@ namespace BackupRestoreDB
 
                     cmd.ExecuteNonQuery();
                     MessageBox.Show("Sao lưu cơ sở dữ liệu [" + tenDB + "] thành công!", "Thành công", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    LoadLichSuSaoLuu(tenDB);
+                    loadLichSuSaoLuu(tenDB);
                 }
             }
             catch(Exception ex)
@@ -207,7 +270,7 @@ namespace BackupRestoreDB
             }
 
             string deviceName = "DEVICE_" + tenDB;
-            string thuMucBackup = @"c:\SQLBackup";
+            string thuMucBackup = @"c:\SQLBackup\Full";
             if(!System.IO.Directory.Exists(thuMucBackup))
             {
                 System.IO.Directory.CreateDirectory(thuMucBackup);
@@ -263,11 +326,11 @@ namespace BackupRestoreDB
                 string tenDB = dgvDatabases.CurrentRow.Cells[0].Value.ToString();
                 lblDBName.Text = tenDB;
                 lblBackupCount.Text = "0";
-                LoadLichSuSaoLuu(tenDB);
+                loadLichSuSaoLuu(tenDB);
             }
         }
 
-        private void LoadLichSuSaoLuu(string dbName)
+        private void loadLichSuSaoLuu(string dbName)
         {
             try
             {
