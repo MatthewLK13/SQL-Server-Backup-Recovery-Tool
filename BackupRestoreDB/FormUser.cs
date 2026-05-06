@@ -118,13 +118,29 @@ namespace BackupRestoreDB
             dgvBackups.ReadOnly = true;
             dgvBackups.BackgroundColor = Color.White;
             dgvBackups.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            
-
             dgvBackups.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             dgvBackups.RowHeadersWidth = 25;
             dgvBackups.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             dgvBackups.Height = 210;
+            dgvBackups.SelectionChanged += DgvBackups_SelectionChanged;
+        }
 
+        private void DgvBackups_SelectionChanged(object sender, EventArgs e)
+        {
+            // Kiểm tra xem có dòng nào đang được chọn không
+            if (dgvBackups.CurrentRow != null && dgvBackups.CurrentRow.Index >= 0)
+            {
+                // Truy xuất dòng hiện tại
+                DataGridViewRow row = dgvBackups.CurrentRow;
+
+        
+                var cellValue = row.Cells["Bản sao lưu thứ"].Value;
+
+                if (cellValue != null)
+                {
+                    lblBackupCount.Text = cellValue.ToString();
+                }
+            }
         }
 
         private void BtnExit_Click(object sender, EventArgs e)
@@ -138,61 +154,67 @@ namespace BackupRestoreDB
 
         private void btnRestore_Click(object sender, EventArgs e)
         {
-            // 1. Ràng buộc an toàn: Phải chọn 1 dòng lịch sử
+            // 1. Ràng buộc dữ liệu
             if (dgvBackups.CurrentRow == null)
             {
-                MessageBox.Show("Vui lòng chọn một bản sao lưu trong danh sách!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Vui lòng chọn một bản sao lưu!", "Thông báo");
                 return;
             }
 
-            // 2. Lấy dữ liệu từ GridView
-            int position = Convert.ToInt32(dgvBackups.CurrentRow.Cells[0].Value);
             string tenDB = dgvDatabases.CurrentRow.Cells[0].Value.ToString();
+            int position = Convert.ToInt32(dgvBackups.CurrentRow.Cells[0].Value);
             string deviceName = "DEVICE_" + tenDB;
+            string logPath = $@"C:\SQLBackup\Log\Tail_{tenDB}.trn"; // Đường dẫn lưu Tail-Log
 
-            // 3. Cảnh báo mất dữ liệu
-            DialogResult dr = MessageBox.Show(
-                $"CẢNH BÁO: Dữ liệu hiện tại của [{tenDB}] sẽ bị thay thế hoàn toàn!\nBạn đã chắc chắn muốn thực hiện?",
-                "Xác nhận phục hồi", MessageBoxButtons.YesNo, MessageBoxIcon.Stop, MessageBoxDefaultButton.Button2);
+            if (MessageBox.Show($"Xác nhận phục hồi database [{tenDB}]?", "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
 
-            if (dr == DialogResult.Yes)
+            // QUAN TRỌNG: Kết nối vào database 'master' để thực hiện phục hồi
+            SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(connectionString);
+            builder.InitialCatalog = "master";
+
+            using (SqlConnection conn = new SqlConnection(builder.ConnectionString))
             {
                 try
                 {
-                    // Sử dụng chuỗi kết nối của bạn (thường là biến toàn cục)
-                    using (SqlConnection conn = new SqlConnection(connectionString))
+                    conn.Open();
+
+                    // Bước 1 & 2: Ngắt kết nối người dùng và Backup Log đuôi (Tail-Log)
+                    // NORECOVERY đưa DB vào trạng thái chờ phục hồi, ngắt mọi kết nối mới
+                    string sqlTailLog = $@"
+                ALTER DATABASE [{tenDB}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                BACKUP LOG [{tenDB}] TO DISK = '{logPath}' WITH INIT, NORECOVERY;";
+                    new SqlCommand(sqlTailLog, conn).ExecuteNonQuery();
+
+                    // Bước 3: Phục hồi bản Full Backup (Điểm xuất phát)
+                    // NORECOVERY: Giữ DB ở trạng thái chờ để có thể nạp tiếp file Log
+                    string sqlRestoreFull = $@"RESTORE DATABASE [{tenDB}] FROM [{deviceName}] WITH FILE = {position}, REPLACE, NORECOVERY;";
+                    new SqlCommand(sqlRestoreFull, conn).ExecuteNonQuery();
+
+                    // Bước 4: Phục hồi Log (Nạp các hành động từ file Log vừa backup)
+                    string sqlRestoreLog = "";
+                    if (chkTime.Checked)
                     {
-                        conn.Open();
-                        SqlCommand cmd = new SqlCommand("sp_RestoreDatabase", conn);
-                        cmd.CommandType = CommandType.StoredProcedure;
-
-                        // Nạp tham số cứng
-                        cmd.Parameters.AddWithValue("@dbName", tenDB);
-                        cmd.Parameters.AddWithValue("@deviceName", deviceName);
-                        cmd.Parameters.AddWithValue("@position", position);
-                        cmd.Parameters.AddWithValue("@logFolderPath", @"c:\SQLBackup\Log\");
-                        // Nạp tham số linh hoạt theo CheckBox
-                        if (chkTime.Checked)
-                        {
-                            cmd.Parameters.AddWithValue("@isPointInTime", 1);
-                            DateTime time = dtpNgay.Value.Date + dtpGio.Value.TimeOfDay;
-                            cmd.Parameters.AddWithValue("@stopAtTime", time);
-                        }
-                        else
-                        {
-                            cmd.Parameters.AddWithValue("@isPointInTime", 0);
-                            cmd.Parameters.AddWithValue("@stopAtTime", DBNull.Value);
-                        }
-
-                        // Thực thi
-                        cmd.ExecuteNonQuery();
-
-                        MessageBox.Show("Khôi phục dữ liệu thành công!", "Tuyệt vời", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        // STOPAT: Thực hiện lại các hành động trong Log nhưng dừng lại đúng thời điểm t
+                        DateTime stopAt = dtpNgay.Value.Date + dtpGio.Value.TimeOfDay;
+                        sqlRestoreLog = $@"RESTORE LOG [{tenDB}] FROM DISK = '{logPath}' WITH STOPAT = '{stopAt:yyyy-MM-dd HH:mm:ss}', RECOVERY;";
                     }
+                    else
+                    {
+                        // RECOVERY: Hoàn tất quá trình và đưa Database hoạt động trở lại
+                        sqlRestoreLog = $@"RESTORE LOG [{tenDB}] FROM DISK = '{logPath}' WITH RECOVERY;";
+                    }
+                    new SqlCommand(sqlRestoreLog, conn).ExecuteNonQuery();
+
+                    // Bước 5: Chuyển lại database sang chế độ hoạt động bình thường
+                    new SqlCommand($"ALTER DATABASE [{tenDB}] SET MULTI_USER;", conn).ExecuteNonQuery();
+
+                    MessageBox.Show("Khôi phục dữ liệu thành công!", "Thông báo");
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show("Quá trình khôi phục thất bại. Lỗi: \n" + ex.Message, "Lỗi Server", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    // Cố gắng mở lại quyền truy cập nếu xảy ra lỗi giữa chừng
+                    try { new SqlCommand($"ALTER DATABASE [{tenDB}] SET MULTI_USER;", conn).ExecuteNonQuery(); } catch { }
+                    MessageBox.Show("Lỗi: " + ex.Message, "Lỗi Server");
                 }
             }
         }
@@ -325,8 +347,16 @@ namespace BackupRestoreDB
             {
                 string tenDB = dgvDatabases.CurrentRow.Cells[0].Value.ToString();
                 lblDBName.Text = tenDB;
-                lblBackupCount.Text = "0";
                 loadLichSuSaoLuu(tenDB);
+
+                if (dgvBackups.Rows.Count > 0)
+                {
+                    lblBackupCount.Text = dgvBackups.Rows[0].Cells["Bản sao lưu thứ"].Value.ToString();
+                }
+                else
+                {
+                    lblBackupCount.Text = "N/A";
+                }
             }
         }
 
@@ -359,11 +389,7 @@ namespace BackupRestoreDB
             }
         }
 
-        private void BackupRestoreDB_Load(object sender, EventArgs e)
-        {
-
-        }
-
+        
        
     }
 }
