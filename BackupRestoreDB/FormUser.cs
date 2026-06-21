@@ -32,6 +32,12 @@ namespace BackupRestoreDB
             InitializeComponent();
             initializeUI();
             loadDanhSachDB();
+
+            // Ban đầu chưa chọn DB nên disable các nút thao tác
+            btnBackupDB.Enabled = false;
+            btnRestoreDB.Enabled = false;
+            btnCreateDevice.Enabled = false;
+            chkTime.Enabled = false;
         }
 
         private void initializeUI()
@@ -340,6 +346,12 @@ namespace BackupRestoreDB
                     cmd.ExecuteNonQuery();
                     MessageBox.Show("Sao lưu cơ sở dữ liệu [" + tenDB + "] thành công!", "Thành công", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     loadLichSuSaoLuu(tenDB);
+
+                    // Cập nhật button states và label sau backup
+                    if (dgvBackups.Rows.Count > 0)
+                    {
+                        lblBackupCount.Text = dgvBackups.Rows[0].Cells["Bản sao lưu thứ"].Value.ToString();
+                    }
                 }
             }
             catch(Exception ex)
@@ -387,6 +399,11 @@ namespace BackupRestoreDB
                     cmdCreate.ExecuteNonQuery();
 
                     MessageBox.Show("Tạo Device thành công! Trả Device về: " + physicalPath, "Thành công", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                    // Cập nhật button states sau khi tạo device
+                    btnBackupDB.Enabled = true;
+                    btnRestoreDB.Enabled = true;
+                    btnCreateDevice.Enabled = false;
                 }
             }
             catch(Exception ex)
@@ -421,6 +438,22 @@ namespace BackupRestoreDB
                 else
                 {
                     lblBackupCount.Text = "N/A";
+                }
+
+                // Kiểm tra device có tồn tại không để set button states
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+                    string checkDevice = "SELECT COUNT(*) FROM sys.backup_devices WHERE name = @devName";
+                    SqlCommand cmdDevice = new SqlCommand(checkDevice, conn);
+                    cmdDevice.Parameters.AddWithValue("@devName", "DEVICE_" + tenDB);
+                    bool hasDevice = (int)cmdDevice.ExecuteScalar() > 0;
+
+                    btnBackupDB.Enabled = hasDevice;
+                    btnRestoreDB.Enabled = hasDevice;
+                    btnCreateDevice.Enabled = !hasDevice;
+                    chkTime.Enabled = hasDevice;
+                    if (!hasDevice) chkTime.Checked = false;
                 }
             }
         }
