@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Data;
 using System.Data.SqlClient;
+using BackupRestoreDB.Services;
 
 namespace BackupRestoreDB
 {
@@ -22,6 +23,7 @@ namespace BackupRestoreDB
         private CheckBox chkTime;
         private CheckBox chkDeleteOldBackups;
         private string connectionString;
+        private RestoreService restoreService;
 
         ToolStripButton btnBackupDB;
         ToolStripButton btnRestoreDB;
@@ -31,6 +33,7 @@ namespace BackupRestoreDB
         public BackupRestoreDB(string cnn)
         {
             this.connectionString = cnn;
+            this.restoreService = new RestoreService(cnn);
             InitializeComponent();
             initializeUI();
             loadDanhSachDB();
@@ -153,7 +156,7 @@ namespace BackupRestoreDB
 
             Label lblHuongDan = new Label()
             {
-                Text = "Huong dan: Thoi diem phuc hoi phai SAU ban sao luu da chon va TRUOC thoi diem hien tai it nhat 1 phut",
+                Text = "He thong tu dong chon ban backup moi nhat truoc thoi diem ban nhap. Thoi diem phai TRUOC hien tai it nhat 1 phut.",
                 Location = new Point(410, 12),
                 AutoSize = true,
                 Font = new Font("Segoe UI", 8F, FontStyle.Italic),
@@ -193,7 +196,7 @@ namespace BackupRestoreDB
             dgvBackups.ReadOnly = true;
             dgvBackups.BackgroundColor = whiteColor;
             dgvBackups.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            dgvBackups.AutoSizeColumnsMode = DataGridViewAutoSizeColumnMode.Fill;
+            dgvBackups.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             dgvBackups.RowHeadersWidth = 25;
             dgvBackups.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             dgvBackups.Height = 210;
@@ -236,10 +239,10 @@ namespace BackupRestoreDB
 
         private void btnRestore_Click(object sender, EventArgs e)
         {
-            // 1. Rang buoc du lieu
-            if (dgvBackups.CurrentRow == null)
+            // 1. Rang buoc: phai chon CSDL tu danh sach ben trai
+            if (dgvDatabases.CurrentRow == null || dgvDatabases.CurrentRow.Cells[0].Value == null)
             {
-                MessageBox.Show("Vui long chon mot ban sao luu!", "Thong bao");
+                MessageBox.Show("Vui long chon co so du lieu o danh sach ben trai!", "Thong bao", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -252,40 +255,18 @@ namespace BackupRestoreDB
                 return;
             }
 
-            int position = Convert.ToInt32(dgvBackups.CurrentRow.Cells[0].Value);
-            string deviceName = "DEVICE_" + tenDB;
-
-            // 1.2. Build safe path - tran path traversal attack
-            string logFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQLBackup", "Log");
-            Directory.CreateDirectory(logFolder); // Tao folder neu chua co
-            string logPath = Path.Combine(logFolder, $"Tail_{tenDB}.trn");
-
-            // 1.3. Neu chon phuc hoi theo thoi gian - kiem tra tinh hop le
+            // 2. Xac dinh position dua theo che do phuc hoi
+            //    - PIT mode: tu dong query max(position) truoc thoi diem T
+            //    - Non-PIT: user chon tu grid
+            int position;
             DateTime? stopAt = null;
+
             if (chkTime.Checked)
             {
+                // === Che do Point-in-Time Recovery ===
                 stopAt = dtpNgay.Value.Date + dtpGio.Value.TimeOfDay;
 
-                // Lay thoi diem backup cua ban da chon
-                object backupTimeValue = dgvBackups.CurrentRow.Cells["Thoi gian thuc hien"].Value;
-                if (backupTimeValue == null || backupTimeValue == DBNull.Value)
-                {
-                    MessageBox.Show("Khong doc duoc thoi gian ban sao luu da chon!", "Loi", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
-                }
-                DateTime backupTime = Convert.ToDateTime(backupTimeValue);
-
-                // Kiem tra: thoi diem phuc hoi phai SAU thoi diem backup
-                if (stopAt.Value <= backupTime)
-                {
-                    MessageBox.Show($"Thoi diem phuc hoi phai SAU thoi diem ban sao luu da chon!\n\n" +
-                                   $"• Ban sao luu: {backupTime:dd/MM/yyyy HH:mm:ss}\n" +
-                                   $"• Thoi diem ban nhap: {stopAt.Value:dd/MM/yyyy HH:mm:ss}",
-                                   "Loi thoi gian", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                // Kiem tra: thoi diem phuc hoi phai TRUOC thoi diem hien tai it nhat 1 phut
+                // Validate: thoi diem phuc hoi phai TRUOC thoi diem hien tai it nhat 1 phut
                 DateTime minAllowedTime = DateTime.Now.AddMinutes(-1);
                 if (stopAt.Value >= minAllowedTime)
                 {
@@ -295,11 +276,51 @@ namespace BackupRestoreDB
                                    "Loi thoi gian", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
+
+                // Tu dong tim max(position) trong msdb.dbo.backupset co backup_start_date <= T
+                try
+                {
+                    position = restoreService.GetMaxPositionBefore(tenDB, stopAt.Value);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Khong the truy van backup history:\n" + ex.Message, "Loi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                if (position == 0)
+                {
+                    MessageBox.Show($"Khong co ban backup nao truoc thoi diem {stopAt.Value:dd/MM/yyyy HH:mm:ss}!\n\n" +
+                                   "Vui long chay Full Backup truoc hoac chon thoi diem khac.",
+                                   "Khong tim thay backup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+            }
+            else
+            {
+                // === Che do Restore thuong ===
+                if (dgvBackups.CurrentRow == null)
+                {
+                    MessageBox.Show("Vui long chon mot ban sao luu tu bang ben phai!", "Thong bao", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                position = Convert.ToInt32(dgvBackups.CurrentRow.Cells[0].Value);
             }
 
-            if (MessageBox.Show($"Xac nhan phuc hoi database [{tenDB}]?", "Xac nhan", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            string deviceName = "DEVICE_" + tenDB;
 
-            // QUAN TRONG: Ket noi vao database 'master' de thuc hien phuc hoi
+            // 3. Build safe path - tran path traversal attack
+            string logFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SQLBackup", "Log");
+            Directory.CreateDirectory(logFolder);
+            string logPath = Path.Combine(logFolder, $"Tail_{tenDB}.trn");
+
+            // 4. Xac nhan voi nguoi dung
+            string confirmMsg = stopAt.HasValue
+                ? $"Xac nhan phuc hoi database [{tenDB}] ve thoi diem {stopAt.Value:dd/MM/yyyy HH:mm:ss}?"
+                : $"Xac nhan phuc hoi database [{tenDB}]?";
+            if (MessageBox.Show(confirmMsg, "Xac nhan", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+
+            // 5. QUAN TRONG: Ket noi vao database 'master' de thuc hien phuc hoi
             SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder(connectionString);
             builder.InitialCatalog = "master";
 
@@ -322,7 +343,7 @@ namespace BackupRestoreDB
                     new SqlCommand(sqlRestoreFull, conn).ExecuteNonQuery();
 
                     // Buoc 4: Phuc hoi Log (Nap cac hanh dong tu file Log vua backup)
-                    string sqlRestoreLog = "";
+                    string sqlRestoreLog;
                     if (stopAt.HasValue)
                     {
                         // STOPAT: Thuc hien lai cac hanh dong trong Log nhung dung lai dung thoi diem t
@@ -662,7 +683,7 @@ namespace BackupRestoreDB
 
                     dgvBackups.DataSource = dtHistory;
 
-                    dgvBackups.AutoSizeColumnsMode = DataGridViewAutoSizeColumnMode.Fill;
+                    dgvBackups.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
                 }
             }
             catch (Exception ex)
