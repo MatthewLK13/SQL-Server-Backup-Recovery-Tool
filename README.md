@@ -261,12 +261,22 @@ NẾU CÓ backup log (15 phút/lần):
 
 ### Các Stored Procedures
 
-| Tên | Chức năng |
-|-----|-----------|
-| `sp_BackupDatabase` | Tạo Full Backup |
-| `sp_BackupList` | Lấy danh sách backup |
-| `sp_RestoreDatabase` | Restore database |
-| `sp_JobBackupLog` | Backup log cho tất cả database |
+| Tên | Chức năng | Trạng thái |
+|-----|-----------|-----------|
+| `sp_BackupDatabase` | Tạo Full Backup | ✅ Đang dùng |
+| `sp_BackupList` | Lấy danh sách backup | ✅ Đang dùng |
+| `sp_JobBackupLog` | Backup log cho tất cả database | ✅ Đang dùng (gọi từ Task Scheduler) |
+| `sp_RestoreDatabase` | _(deprecated)_ | ⚠️ **Không sử dụng** — chỉ làm tài liệu tham khảo |
+
+### Vì sao logic Restore không dùng Stored Procedure?
+
+> **Lý do kiến trúc:** khi phục hồi, target database bị xóa/sửa. Nếu SQL restore nằm trong **stored procedure sống trong chính database đó**, SP sẽ bị xóa theo và không thể gọi lại.
+>
+> → Logic restore được đặt trong C# source code tại `BackupRestoreDB/Services/RestoreService.cs` và `FormUser.cs:btnRestore_Click`, đảm bảo chạy được bất kể trạng thái database.
+>
+> File `sp_RestoreDatabase.sql` được giữ lại làm tài liệu tham khảo, **không nên chạy** trên production.
+
+### Chu Kỳ Backup Đề Xuất
 
 ### Chu Kỳ Backup Đề Xuất
 
