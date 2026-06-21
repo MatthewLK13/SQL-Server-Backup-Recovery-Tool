@@ -25,6 +25,9 @@ bld/
 # Visual Studio 2015 cache/options directory
 .vs/
 
+# Claude Code local settings (không commit)
+.claude/
+
 # MSTest test Results
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
@@ -181,7 +184,7 @@ Generated_Code/
 # to a newer Visual Studio version. Backup files are not needed,
 # because we have git ;-)
 _UpgradeReport_Files/
-Backup*/
+Backup_*/
 UpgradeLog*.XML
 UpgradeLog*.htm
 
