@@ -154,17 +154,84 @@ namespace BackupRestoreDB
 
         private void btnRestore_Click(object sender, EventArgs e)
         {
-            // 1. Ràng buộc dữ liệu
-            if (dgvBackups.CurrentRow == null)
+            // 1. Ràng buộc: phải chọn CSDL từ danh sách bên trái
+            if (dgvDatabases.CurrentRow == null || dgvDatabases.CurrentRow.Cells[0].Value == null)
             {
-                MessageBox.Show("Vui lòng chọn một bản sao lưu!", "Thông báo");
+                MessageBox.Show("Vui lòng chọn cơ sở dữ liệu ở danh sách bên trái!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
             string tenDB = dgvDatabases.CurrentRow.Cells[0].Value.ToString();
-            int position = Convert.ToInt32(dgvBackups.CurrentRow.Cells[0].Value);
             string deviceName = "DEVICE_" + tenDB;
-            string logPath = $@"C:\SQLBackup\Log\Tail_{tenDB}.trn"; // Đường dẫn lưu Tail-Log
+            string logPath = $@"C:\SQLBackup\Log\Tail_{tenDB}.trn";
+
+            int position;
+            DateTime? stopAt = null;
+
+            // 2. Xác định position và chế độ phục hồi
+            if (chkTime.Checked)
+            {
+                // === Chế độ Point-in-Time Recovery ===
+                stopAt = dtpNgay.Value.Date + dtpGio.Value.TimeOfDay;
+
+                // Validate: thời điểm phục hồi phải TRƯỚC thời điểm hiện tại ít nhất 1 phút
+                if (stopAt.Value >= DateTime.Now.AddMinutes(-1))
+                {
+                    MessageBox.Show("Thời điểm phục hồi phải TRƯỚC thời điểm hiện tại ít nhất 1 phút!", "Lỗi thời gian", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                // Tự động tìm bản backup mới nhất có backup_start_date <= thời điểm target
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+
+                    // Kiểm tra recovery model của database
+                    string queryRecovery = @"
+                        SELECT recovery_model_desc
+                        FROM sys.databases
+                        WHERE name = @dbName";
+                    SqlCommand cmdRecovery = new SqlCommand(queryRecovery, conn);
+                    cmdRecovery.Parameters.AddWithValue("@dbName", tenDB);
+                    string recoveryMode = cmdRecovery.ExecuteScalar().ToString();
+
+                    if (recoveryMode != "FULL")
+                    {
+                        MessageBox.Show($"Database [{tenDB}] đang ở chế độ [{recoveryMode}].\n" +
+                                       "Để phục hồi theo thời gian, database cần ở chế độ FULL.\n" +
+                                       "Vui lòng chuyển sang FULL recovery model hoặc chọn chế độ phục hồi thông thường.",
+                                       "Lỗi recovery mode", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    string queryMaxPos = @"
+                        SELECT ISNULL(MAX(position), 0)
+                        FROM msdb.dbo.backupset
+                        WHERE database_name = @dbName
+                          AND backup_start_date <= @targetTime
+                          AND type IN ('D', 'L')";
+                    SqlCommand cmdMax = new SqlCommand(queryMaxPos, conn);
+                    cmdMax.Parameters.AddWithValue("@dbName", tenDB);
+                    cmdMax.Parameters.AddWithValue("@targetTime", stopAt.Value);
+                    position = Convert.ToInt32(cmdMax.ExecuteScalar());
+                }
+
+                if (position == 0)
+                {
+                    MessageBox.Show($"Không có bản backup nào trước thời điểm {stopAt.Value:dd/MM/yyyy HH:mm:ss}!\nVui lòng chạy Full Backup trước hoặc chọn thời điểm khác.", "Không tìm thấy backup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+            }
+            else
+            {
+                // === Chế độ restore thông thường: yêu cầu user chọn bản sao lưu từ lưới ===
+                if (dgvBackups.CurrentRow == null)
+                {
+                    MessageBox.Show("Vui lòng chọn một bản sao lưu từ danh sách bên phải!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                position = Convert.ToInt32(dgvBackups.CurrentRow.Cells[0].Value);
+            }
 
             if (MessageBox.Show($"Xác nhận phục hồi database [{tenDB}]?", "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
 
@@ -191,12 +258,11 @@ namespace BackupRestoreDB
                     new SqlCommand(sqlRestoreFull, conn).ExecuteNonQuery();
 
                     // Bước 4: Phục hồi Log (Nạp các hành động từ file Log vừa backup)
-                    string sqlRestoreLog = "";
-                    if (chkTime.Checked)
+                    string sqlRestoreLog;
+                    if (stopAt.HasValue)
                     {
                         // STOPAT: Thực hiện lại các hành động trong Log nhưng dừng lại đúng thời điểm t
-                        DateTime stopAt = dtpNgay.Value.Date + dtpGio.Value.TimeOfDay;
-                        sqlRestoreLog = $@"RESTORE LOG [{tenDB}] FROM DISK = '{logPath}' WITH STOPAT = '{stopAt:yyyy-MM-dd HH:mm:ss}', RECOVERY;";
+                        sqlRestoreLog = $@"RESTORE LOG [{tenDB}] FROM DISK = '{logPath}' WITH STOPAT = '{stopAt.Value:yyyy-MM-dd HH:mm:ss}', RECOVERY;";
                     }
                     else
                     {
@@ -257,7 +323,6 @@ namespace BackupRestoreDB
             string dienGiai = "Bản sao lưu tạo lúc " + DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
 
             int ghiDe = chkDeleteOldBackups.Checked ? 1 : 0;
-            MessageBox.Show("Trạng thái biến ghiDe đang là: " + ghiDe);
             try
             {
                 using (SqlConnection conn = new SqlConnection(connectionString))
